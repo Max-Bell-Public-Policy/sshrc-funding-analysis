@@ -235,54 +235,45 @@ fig.update_layout(
     showlegend=False,
 )
 
-CLICK_POPUP_JS = """
+out = r"C:\Users\calvi\policy-deep-dive-workspace\sshrc_bubble.html"
+fig.write_html(out, include_plotlyjs=True)
+
+# Inject click-to-pin panel JS directly before </body>
+click_js = """
+<div id="sshrc-panel" style="position:fixed;top:80px;right:24px;width:420px;max-height:82vh;
+overflow-y:auto;background:#fff;border:1px solid #d0d0d0;border-radius:10px;
+padding:18px 20px;box-shadow:0 6px 28px rgba(0,0,0,0.18);font-size:13px;
+line-height:1.65;display:none;z-index:9999;font-family:sans-serif;"></div>
+
+<script>
 (function() {
-    var myPlot = document.getElementById('sshrc-bubble');
-
-    var panel = document.createElement('div');
-    panel.style.cssText = [
-        'position:fixed',
-        'top:80px',
-        'right:24px',
-        'width:420px',
-        'max-height:82vh',
-        'overflow-y:auto',
-        'background:#fff',
-        'border:1px solid #d0d0d0',
-        'border-radius:10px',
-        'padding:18px 20px 18px 20px',
-        'box-shadow:0 6px 28px rgba(0,0,0,0.18)',
-        'font-size:13px',
-        'line-height:1.65',
-        'display:none',
-        'z-index:9999',
-        'font-family:sans-serif',
-    ].join(';');
-    document.body.appendChild(panel);
-
+    var panel = document.getElementById('sshrc-panel');
     function closePanel() { panel.style.display = 'none'; }
+
+    var plots = document.querySelectorAll('.plotly-graph-div');
+    var myPlot = plots[0];
 
     myPlot.on('plotly_click', function(data) {
         var pt = data.points[0];
         var content = pt.customdata;
         panel.innerHTML =
-            '<div style="text-align:right;margin-bottom:6px;">' +
-            '<button onclick="this.closest(\'#sshrc-bubble\').parentElement.querySelector(\'[data-panel]\').style.display=\'none\'" ' +
-            'style="border:none;background:#eee;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:15px;line-height:1;">&#x2715;</button>' +
+            '<div style="text-align:right;margin-bottom:8px;">' +
+            '<button id="sshrc-close-btn" style="border:none;background:#eee;' +
+            'border-radius:5px;padding:3px 10px;cursor:pointer;font-size:15px;">&#x2715;</button>' +
             '</div>' + content;
-
-        // fix close button reference
-        panel.querySelector('button').onclick = closePanel;
+        document.getElementById('sshrc-close-btn').onclick = closePanel;
         panel.style.display = 'block';
     });
-
-    // Clicking blank chart area closes panel
-    myPlot.on('plotly_deselect', closePanel);
 })();
+</script>
 """
 
-out = r"C:\Users\calvi\policy-deep-dive-workspace\sshrc_bubble.html"
-fig.write_html(out, include_plotlyjs=True, div_id="sshrc-bubble", post_script=CLICK_POPUP_JS)
+with open(out, "r", encoding="utf-8") as f:
+    html = f.read()
+html = html.replace("</body>", click_js + "\n</body>")
+with open(out, "w", encoding="utf-8") as f:
+    f.write(html)
+
 print("Written:", out)
 
 # Print summary table
