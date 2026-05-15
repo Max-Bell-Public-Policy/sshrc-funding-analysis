@@ -91,11 +91,13 @@ for area in areas_2024:
         if r["fiscal_year"] == 2024 and r["area"] == area
     )
 
-    # Sample titles (FY2024, up to 8)
-    sample_titles = [
-        r["title"] for r in all_rows
+    # Top 5 largest grants in FY2024 by award amount
+    area_grants_2024 = [
+        r for r in all_rows
         if r["fiscal_year"] == 2024 and r["area"] == area and r["title"]
-    ][:8]
+    ]
+    area_grants_2024.sort(key=lambda r: r["amount"], reverse=True)
+    sample_titles = [(r["title"], r["amount"]) for r in area_grants_2024[:5]]
 
     bubble_data.append({
         "area": area,
@@ -153,8 +155,13 @@ for b in bubble_data:
     disc_str = "<br>".join(
         f"  • {d} ({n})" for d, n in list(b["disciplines"].items())[:6]
     )
-    title_str = "<br>".join(f"  – {t[:75]}…" if len(t) > 75 else f"  – {t}"
-                             for t in b["sample_titles"][:5])
+    def wrap_title(title, amt, width=85):
+        import textwrap
+        lines = textwrap.wrap(title, width=width)
+        first = f"  – {lines[0]}"
+        rest = ["    " + l for l in lines[1:]]
+        return "<br>".join([first] + rest) + f"  <i>(${amt/1000:.0f}K)</i>"
+    title_str = "<br>".join(wrap_title(t, a) for t, a in b["sample_titles"])
     trend_label = f"+{b['trend_pct']:.0f}%" if b["trend_pct"] >= 0 else f"{b['trend_pct']:.0f}%"
     hover = (
         f"<b>{b['area']}</b><br>"
@@ -163,7 +170,7 @@ for b in bubble_data:
         f"Trend (earliest year → 2024): <b>{trend_label}</b><br>"
         f"<br><b>Year-by-year:</b><br>{yearly_str}<br>"
         f"<br><b>Top disciplines funded:</b><br>{disc_str}<br>"
-        f"<br><b>Sample 2024 projects:</b><br>{title_str}"
+        f"<br><b>Top 5 largest 2024 projects:</b><br>{title_str}"
     )
     hovers.append(hover)
 
