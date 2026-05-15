@@ -7,28 +7,33 @@ with open(r"C:\Users\calvi\policy-deep-dive-workspace\topic_assignments.json", e
     ta = json.load(f)
 
 counts = ta["topic_counts"]
-topic_titles_map = ta["topic_titles"]   # "0" -> [title, title, ...]
+topic_titles_map = ta["topic_titles"]
 total_assigned = sum(counts)
 
 topic_labels = [
-    "Technology, Health & Digital Society",
-    "Race, Identity & Cultural Memory",
-    "Policy, Justice & Climate",
-    "AI, Digital & Children",
-    "Care, Education & Early Childhood",
-    "Corporate Governance & Global Relations",
-    "Wellbeing, Language & Social Systems",
-    "Health, Education & Identity",
-    "Economic Development & Food Systems",
+    "Youth, Migration & Social Voice",
+    "Indigenous, Language & Cultural Identity",
+    "Public Policy, Justice & Climate",
+    "Children, Land & Environmental Education",
+    "Markets, Corporate Change & Queer Studies",
+    "Community Economics, Climate & Democracy",
+    "Financial Politics, Work & Gender",
+    "History, Gender & Social Resilience",
+    "Feminist Economics & Care Work",
+    "Archives, Refugees & Communication",
+    "Digital Health & Education",
+    "Technology, Long-Term Care & Women's Health",
+    "Sport, Family & Early Childhood",
+    "Food Systems, Behaviour & Social Development",
+    "AI, Digital Governance & Racial Justice",
 ]
 
 INSIGHT_TOTAL = 86.3
 insight_themes = [
     (topic_labels[i], round(counts[i] / total_assigned * INSIGHT_TOTAL, 1), topic_titles_map[str(i)])
-    for i in range(9)
+    for i in range(15)
 ]
 
-# Other programs (theme, value, titles list)
 other_data = [
     ("Insight Development Grants", "Early-Stage Research",          36.8, []),
     ("Partnership Grants",         "Equity & Access",                9.6, []),
@@ -58,14 +63,13 @@ prog_colors = {
     "Partnership Engage Grants":     "#f0a860",
 }
 
-# ── Build full data rows: (program, theme, value, titles_list) ────────────────
+# ── Build full data rows ──────────────────────────────────────────────────────
 data_full = []
 for label, val, t_list in insight_themes:
     data_full.append(("Insight Grants", label, val, t_list))
 for prog, theme, val, t_list in other_data:
     data_full.append((prog, theme, val, t_list))
 
-# Program totals
 programs = {}
 for prog, theme, val, _ in data_full:
     programs[prog] = programs.get(prog, 0) + val
@@ -73,7 +77,7 @@ for prog, theme, val, _ in data_full:
 total_shown = sum(v for _, _, v, _ in data_full)
 
 # ── Assemble treemap arrays ───────────────────────────────────────────────────
-labels, parents, values, colors, customdata = [], [], [], [], []
+labels, parents, values, colors, customdata, font_sizes = [], [], [], [], [], []
 
 # Root
 labels.append("SSHRC Project Funding")
@@ -81,6 +85,7 @@ parents.append("")
 values.append(total_shown)
 colors.append("#4a4a4a")
 customdata.append("")
+font_sizes.append(16)
 
 # Program nodes
 for prog, total in programs.items():
@@ -90,8 +95,9 @@ for prog, total in programs.items():
     values.append(total)
     colors.append(prog_colors.get(prog, "#999"))
     customdata.append("")
+    font_sizes.append(15)
 
-# Theme nodes
+# Theme and title nodes
 for prog, theme, val, t_list in data_full:
     prog_lbl = prog + "<br><b>$" + f"{programs[prog]:.1f}M</b>"
     theme_lbl = theme + "<br>$" + f"{val:.1f}M"
@@ -103,22 +109,22 @@ for prog, theme, val, t_list in data_full:
     g = min(255, int(c[3:5], 16) + 40)
     b = min(255, int(c[5:7], 16) + 40)
     colors.append(f"#{r:02x}{g:02x}{b:02x}")
-    # Hover: first 10 titles as a preview
     preview = "<br>".join(
         textwrap.shorten(t, width=70, placeholder="…") for t in t_list[:10]
     )
     if len(t_list) > 10:
         preview += f"<br>... and {len(t_list) - 10} more"
     customdata.append(preview)
+    font_sizes.append(13)
 
-    # Title nodes (leaf level — only for Insight Grants which have real titles)
     for title in t_list:
         short = textwrap.shorten(title, width=80, placeholder="…")
         labels.append(short)
         parents.append(theme_lbl)
         values.append(round(val / max(len(t_list), 1), 2))
         colors.append(f"#{r:02x}{g:02x}{b:02x}")
-        customdata.append(title)   # full title in hover
+        customdata.append(title)
+        font_sizes.append(16)   # larger font for individual project titles
 
 # ── Figure ────────────────────────────────────────────────────────────────────
 fig = go.Figure(go.Treemap(
@@ -126,7 +132,7 @@ fig = go.Figure(go.Treemap(
     parents=parents,
     values=values,
     marker=dict(colors=colors, line=dict(width=1, color="#ffffff")),
-    textfont=dict(size=14),
+    textfont=dict(size=font_sizes),
     hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
     customdata=customdata,
     branchvalues="total",
@@ -136,7 +142,7 @@ fig = go.Figure(go.Treemap(
 note = (
     "SSHRC Project Funding by Program and Research Theme (2024-25)  |  "
     "Total shown: ~$" + f"{total_shown:.0f}M CAD<br>"
-    "<sup>Insight Grants themes from LDA topic modeling on 502 grant titles (open data). "
+    "<sup>Insight Grants: 15 themes from LDA topic modeling on 502 grant titles (SSHRC open data). "
     "Click a theme to see individual project titles. "
     "Other program splits estimated from competition results.</sup>"
 )
@@ -151,6 +157,6 @@ fig.update_layout(
 out = r"C:\Users\calvi\policy-deep-dive-workspace\sshrc_treemap.html"
 fig.write_html(out, include_plotlyjs=True)
 print("Written:", out)
-print(f"\nInsight Grants: {total_assigned} titles across 9 topics")
+print(f"\nInsight Grants: 15 topics from {total_assigned} titles")
 for i, (label, val, t_list) in enumerate(insight_themes):
     print(f"  {label}: ${val}M ({len(t_list)} titles)")
