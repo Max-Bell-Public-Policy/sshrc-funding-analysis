@@ -1,14 +1,9 @@
 """
-SSHRC Insight Grants: funding trends by Area of Research (2020-2024).
-Produces an interactive bubble chart where:
-  X = average award size (FY2024)
-  Y = 5-year funding trend (% change 2020->2024)
-  Bubble size = total dollars awarded (FY2024)
-  Color = broad thematic grouping
-Clicking a bubble opens a drill-down panel of funded disciplines and titles.
+SSHRC funding trends by Area of Research (2020-2024), filterable by program.
+Bubble chart: X = avg award, Y = 5-year trend, size = total FY2024 dollars.
 """
 
-import csv, json, collections
+import csv, json, collections, math, textwrap
 import plotly.graph_objects as go
 
 YEARS = [2020, 2021, 2022, 2023, 2024]
@@ -17,228 +12,230 @@ FILES = {
     for yr in YEARS
 }
 
-# ── Load and filter data ──────────────────────────────────────────────────────
+PROGRAMS = [
+    "All Programs",
+    "Insight Grants",
+    "Insight Development Grants",
+    "Partnership Grants",
+    "Partnership Development Grants",
+    "Connection Grants",
+    "Partnership Engage Grants",
+]
+
+PROG_COLORS = {
+    "Insight Grants":                "#1f6aa5",
+    "Insight Development Grants":    "#2d8fc4",
+    "Partnership Grants":            "#2a9d5c",
+    "Partnership Development Grants":"#52b67a",
+    "Connection Grants":             "#e07b39",
+    "Partnership Engage Grants":     "#f0a860",
+    "All Programs":                  "#6c757d",
+}
+
+# ── Load data ─────────────────────────────────────────────────────────────────
 def load_year(path, fiscal_year):
-    rows = []
+    # Read all rows, then deduplicate per grant (file number) keeping the lead row
+    # (highest amount row per file number, which is usually the lead applicant/institution)
+    raw = collections.defaultdict(list)
     with open(path, encoding="utf-8-sig", errors="replace") as f:
         for r in csv.DictReader(f):
-            if r["Program"] != "Insight Grants":
+            prog = r["Program"]
+            if prog not in PROGRAMS[1:]:
                 continue
-            role_key = next(k for k in r if "Role" in k)
-            if r[role_key] != "Applicant":
-                continue
-            comp_key = next(k for k in r if "Competition" in k)
-            area_key = next(k for k in r if "Area_of_Research" in k and "CRSH" not in k)
-            disc_key = next(k for k in r if "Discipline_EN" in k)
+            area_key  = next(k for k in r if "Area_of_Research" in k and "CRSH" not in k)
+            disc_key  = next(k for k in r if "Discipline_EN" in k)
             title_key = next(k for k in r if "Title" in k and "Titre" in k)
             try:
                 amount = float(r["Amount-Montant"])
             except (ValueError, KeyError):
                 amount = 0.0
-            rows.append({
+            file_key = next(k for k in r if "File" in k and "Number" in k)
+            raw[r[file_key]].append({
                 "fiscal_year": fiscal_year,
-                "comp_year": r.get(comp_key, ""),
-                "area": r.get(area_key, "Not Specified") or "Not Specified",
-                "discipline": r.get(disc_key, "Not specified") or "Not specified",
-                "title": r.get(title_key, ""),
-                "amount": amount,
+                "program":     prog,
+                "area":        r.get(area_key, "Not Specified") or "Not Specified",
+                "discipline":  r.get(disc_key, "Not specified") or "Not specified",
+                "title":       r.get(title_key, ""),
+                "amount":      amount,
             })
+    # Keep one row per grant: the row with the highest amount (lead role)
+    rows = [max(v, key=lambda x: x["amount"]) for v in raw.values()]
     return rows
 
 all_rows = []
 for yr in YEARS:
     all_rows.extend(load_year(FILES[yr], yr))
 
-print(f"Total Insight Grant rows: {len(all_rows)}")
+print(f"Total rows loaded: {len(all_rows)}")
 
-# ── Aggregate by area and year ────────────────────────────────────────────────
-# Per year per area: total $, grant count
-YearArea = collections.defaultdict(lambda: {"total": 0.0, "count": 0})
-for r in all_rows:
-    key = (r["fiscal_year"], r["area"])
-    YearArea[key]["total"] += r["amount"]
-    YearArea[key]["count"] += 1
+# ── Compute bubble data per (program_filter, area) ────────────────────────────
+def compute_bubbles(rows, program_filter):
+    if program_filter != "All Programs":
+        rows = [r for r in rows if r["program"] == program_filter]
 
-# All areas present in FY2024
-areas_2024 = sorted(set(r["area"] for r in all_rows if r["fiscal_year"] == 2024))
-print(f"Areas in FY2024: {len(areas_2024)}")
+    YearArea = collections.defaultdict(lambda: {"total": 0.0, "count": 0, "grants": []})
+    for r in rows:
+        key = (r["fiscal_year"], r["area"])
+        YearArea[key]["total"]  += r["amount"]
+        YearArea[key]["count"]  += 1
+        if r["fiscal_year"] == 2024:
+            YearArea[key]["grants"].append(r)
 
-# For each area: total $, grant count, avg award (FY2024) + trend
-bubble_data = []
-for area in areas_2024:
-    d2024 = YearArea[(2024, area)]
-    if d2024["count"] == 0:
-        continue
+    areas_2024 = sorted(set(r["area"] for r in rows if r["fiscal_year"] == 2024))
 
-    total_2024 = d2024["total"]
-    count_2024 = d2024["count"]
-    avg_2024 = total_2024 / count_2024
+    bubbles = []
+    for area in areas_2024:
+        d2024 = YearArea[(2024, area)]
+        if d2024["count"] == 0:
+            continue
 
-    # Trend: compare 2020 vs 2024 total (% change); use earliest year with data if 2020 missing
-    trend_pct = None
-    for base_yr in [2020, 2021, 2022]:
-        base = YearArea[(base_yr, area)]
-        if base["count"] > 0 and base["total"] > 0:
-            trend_pct = (total_2024 - base["total"]) / base["total"] * 100
-            break
+        total_2024 = d2024["total"]
+        count_2024 = d2024["count"]
+        avg_2024   = total_2024 / count_2024
 
-    # Year-by-year totals for sparkline tooltip
-    yearly = {yr: YearArea[(yr, area)]["total"] for yr in YEARS}
+        trend_pct = None
+        for base_yr in [2020, 2021, 2022]:
+            base = YearArea[(base_yr, area)]
+            if base["count"] > 0 and base["total"] > 0:
+                trend_pct = (total_2024 - base["total"]) / base["total"] * 100
+                break
+        if trend_pct is None:
+            continue
 
-    # Disciplines funded in FY2024 for this area
-    disc_counts = collections.Counter(
-        r["discipline"] for r in all_rows
-        if r["fiscal_year"] == 2024 and r["area"] == area
-    )
+        yearly = {yr: YearArea[(yr, area)]["total"] for yr in YEARS}
 
-    # Top 5 largest grants in FY2024 by award amount
-    area_grants_2024 = [
-        r for r in all_rows
-        if r["fiscal_year"] == 2024 and r["area"] == area and r["title"]
-    ]
-    area_grants_2024.sort(key=lambda r: r["amount"], reverse=True)
-    sample_titles = [(r["title"], r["amount"]) for r in area_grants_2024[:5]]
+        disc_counts = collections.Counter(
+            r["discipline"] for r in d2024["grants"]
+        )
 
-    bubble_data.append({
-        "area": area,
-        "total_2024": total_2024,
-        "count_2024": count_2024,
-        "avg_2024": avg_2024,
-        "trend_pct": trend_pct,
-        "yearly": yearly,
-        "disciplines": dict(disc_counts.most_common(10)),
-        "sample_titles": sample_titles,
-    })
+        top5 = sorted(d2024["grants"], key=lambda r: r["amount"], reverse=True)[:5]
 
-# Drop areas with no trend data (only appeared in 2024)
-bubble_data = [b for b in bubble_data if b["trend_pct"] is not None]
-print(f"Areas with trend data: {len(bubble_data)}")
+        def wrap_title(title, amt, width=85):
+            lines = textwrap.wrap(title, width=width)
+            first = f"  – {lines[0]}"
+            rest  = ["    " + l for l in lines[1:]]
+            return "<br>".join([first] + rest) + f"  <i>(${amt/1000:.0f}K)</i>"
 
-# ── Colour groupings ──────────────────────────────────────────────────────────
-COLOR_MAP = {
-    "Health": "#e63946", "Mental Health": "#e63946", "Population studies": "#e63946",
-    "Education": "#457b9d", "Post-Secondary Education and Research": "#457b9d",
-    "Children": "#457b9d", "Youth": "#457b9d", "Literacy": "#457b9d",
-    "Indigenous peoples": "#2d6a4f", "Multiculturalism and ethnic studies": "#2d6a4f",
-    "Immigration": "#2d6a4f", "Gender Issues": "#2d6a4f", "Women": "#2d6a4f",
-    "Environment and Sustainability": "#52b788", "Global/Climate Change": "#52b788",
-    "Energy and natural resources": "#52b788", "Fisheries": "#52b788",
-    "Agriculture": "#52b788", "Forestry, Sylviculture": "#52b788",
-    "Economics": "#f4a261", "Financial and Monetary Systems": "#f4a261",
-    "Employment and labour": "#f4a261", "Productivity": "#f4a261",
-    "Economic and Regional Development": "#f4a261", "Poverty": "#f4a261",
-    "Politics and government": "#9b5de5", "International Relations, Development and Trade": "#9b5de5",
-    "Law and Justice": "#9b5de5",
-    "Arts and culture": "#f72585", "Communication": "#f72585",
-    "Information Technologies": "#3a86ff", "Science and technology": "#3a86ff",
-    "Innovation, Industrial and Technological Development": "#3a86ff",
-    "Social development and welfare": "#fb8500",
-    "Family": "#fb8500", "Elderly": "#fb8500",
-    "Violence": "#fb8500", "Housing": "#fb8500",
-}
-DEFAULT_COLOR = "#adb5bd"
+        yearly_str = "  |  ".join(
+            f"{yr}: ${yearly[yr]/1e6:.1f}M" for yr in YEARS if yearly[yr] > 0
+        )
+        disc_str = "<br>".join(
+            f"  • {d} ({n})" for d, n in disc_counts.most_common(6)
+        )
+        title_str = "<br>".join(wrap_title(r["title"], r["amount"]) for r in top5)
+        trend_label = f"+{trend_pct:.0f}%" if trend_pct >= 0 else f"{trend_pct:.0f}%"
 
-# ── Build figure ──────────────────────────────────────────────────────────────
-xs, ys, sizes, colors, texts, hovers = [], [], [], [], [], []
+        hover = (
+            f"<b>{area}</b><br>"
+            f"FY2024: ${total_2024/1e6:.1f}M across {count_2024} grants "
+            f"(avg ${avg_2024/1000:.0f}K)<br>"
+            f"Trend (earliest year → 2024): <b>{trend_label}</b><br>"
+            f"<br><b>Year-by-year:</b><br>{yearly_str}<br>"
+            f"<br><b>Top disciplines funded:</b><br>{disc_str}<br>"
+            f"<br><b>Top 5 largest 2024 projects:</b><br>{title_str}"
+        )
 
-for b in bubble_data:
-    xs.append(b["avg_2024"] / 1000)          # avg award in $K
-    ys.append(b["trend_pct"])
-    sizes.append(b["total_2024"] / 1_000_000) # bubble size = $M
-    colors.append(COLOR_MAP.get(b["area"], DEFAULT_COLOR))
-    texts.append(b["area"])
+        bubbles.append({
+            "area":        area,
+            "total_2024":  total_2024,
+            "count_2024":  count_2024,
+            "avg_2024":    avg_2024,
+            "trend_pct":   trend_pct,
+            "hover":       hover,
+        })
 
-    # Hover card
-    yearly_str = "  |  ".join(
-        f"{yr}: ${b['yearly'][yr]/1e6:.1f}M" for yr in YEARS if b['yearly'][yr] > 0
-    )
-    disc_str = "<br>".join(
-        f"  • {d} ({n})" for d, n in list(b["disciplines"].items())[:6]
-    )
-    def wrap_title(title, amt, width=85):
-        import textwrap
-        lines = textwrap.wrap(title, width=width)
-        first = f"  – {lines[0]}"
-        rest = ["    " + l for l in lines[1:]]
-        return "<br>".join([first] + rest) + f"  <i>(${amt/1000:.0f}K)</i>"
-    title_str = "<br>".join(wrap_title(t, a) for t, a in b["sample_titles"])
-    trend_label = f"+{b['trend_pct']:.0f}%" if b["trend_pct"] >= 0 else f"{b['trend_pct']:.0f}%"
-    hover = (
-        f"<b>{b['area']}</b><br>"
-        f"FY2024: ${b['total_2024']/1e6:.1f}M across {b['count_2024']} grants "
-        f"(avg ${b['avg_2024']/1000:.0f}K)<br>"
-        f"Trend (earliest year → 2024): <b>{trend_label}</b><br>"
-        f"<br><b>Year-by-year:</b><br>{yearly_str}<br>"
-        f"<br><b>Top disciplines funded:</b><br>{disc_str}<br>"
-        f"<br><b>Top 5 largest 2024 projects:</b><br>{title_str}"
-    )
-    hovers.append(hover)
+    return bubbles
 
-# Normalise bubble sizes for display
-import math
-max_size = max(sizes)
-display_sizes = [max(8, math.sqrt(s / max_size) * 60) for s in sizes]
-
+# ── Build one trace per program ───────────────────────────────────────────────
 fig = go.Figure()
 
-fig.add_trace(go.Scatter(
-    x=xs, y=ys,
-    mode="markers+text",
-    marker=dict(
-        size=display_sizes,
-        color=colors,
-        opacity=0.8,
-        line=dict(width=1, color="white"),
-    ),
-    text=texts,
-    textposition="top center",
-    textfont=dict(size=11),
-    hovertemplate="%{customdata}<extra></extra>",
-    customdata=hovers,
-))
+all_totals = []
+for prog in PROGRAMS:
+    bubbles = compute_bubbles(all_rows, prog)
+    if not bubbles:
+        fig.add_trace(go.Scatter(visible=(prog == "All Programs"),
+                                 x=[], y=[], mode="markers", name=prog))
+        continue
 
-# Quadrant lines
-fig.add_hline(y=0, line=dict(color="#666", dash="dash", width=1))
-fig.add_vline(x=sum(xs)/len(xs), line=dict(color="#666", dash="dash", width=1))
+    totals = [b["total_2024"] for b in bubbles]
+    all_totals.extend(totals)
+    max_t  = max(totals)
+    dsizes = [max(8, math.sqrt(t / max_t) * 60) for t in totals]
+    color  = PROG_COLORS.get(prog, "#999")
 
-# Quadrant labels
-avg_x = sum(xs) / len(xs)
-fig.add_annotation(x=avg_x * 0.3, y=max(ys) * 0.92,
-    text="<b>Low award, Growing</b>", showarrow=False,
-    font=dict(size=11, color="#555"), bgcolor="rgba(255,255,255,0.7)")
-fig.add_annotation(x=max(xs) * 0.85, y=max(ys) * 0.92,
-    text="<b>High award, Growing</b>", showarrow=False,
-    font=dict(size=11, color="#555"), bgcolor="rgba(255,255,255,0.7)")
-fig.add_annotation(x=avg_x * 0.3, y=min(ys) * 0.92,
-    text="<b>Low award, Shrinking</b>", showarrow=False,
-    font=dict(size=11, color="#555"), bgcolor="rgba(255,255,255,0.7)")
-fig.add_annotation(x=max(xs) * 0.85, y=min(ys) * 0.92,
-    text="<b>High award, Shrinking</b>", showarrow=False,
-    font=dict(size=11, color="#555"), bgcolor="rgba(255,255,255,0.7)")
+    fig.add_trace(go.Scatter(
+        x=[b["avg_2024"] / 1000  for b in bubbles],
+        y=[b["trend_pct"]        for b in bubbles],
+        mode="markers+text",
+        name=prog,
+        visible=(prog == "All Programs"),
+        marker=dict(
+            size=dsizes,
+            color=color,
+            opacity=0.8,
+            line=dict(width=1, color="white"),
+        ),
+        text=[b["area"] for b in bubbles],
+        textposition="top center",
+        textfont=dict(size=11),
+        hovertemplate="%{customdata}<extra></extra>",
+        customdata=[b["hover"] for b in bubbles],
+    ))
+    print(f"{prog}: {len(bubbles)} areas")
+
+# ── Filter buttons ────────────────────────────────────────────────────────────
+buttons = []
+for i, prog in enumerate(PROGRAMS):
+    visibility = [j == i for j in range(len(PROGRAMS))]
+    buttons.append(dict(
+        label=prog,
+        method="update",
+        args=[
+            {"visible": visibility},
+            {"title.text": (
+                f"SSHRC {prog}: Funding by Area of Research (2020–2024)<br>"
+                "<sup>X = average award size (FY2024) | Y = % change vs earliest available year | "
+                "Bubble size = total FY2024 dollars | Click bubble to pin details</sup>"
+            )}
+        ],
+    ))
 
 fig.update_layout(
+    updatemenus=[dict(
+        type="buttons",
+        direction="right",
+        active=0,
+        x=0.01, y=1.13,
+        xanchor="left",
+        buttons=buttons,
+        bgcolor="#f8f9fa",
+        bordercolor="#dee2e6",
+        font=dict(size=12),
+    )],
     title=dict(
         text=(
-            "SSHRC Insight Grants: Where is the money going? (2020–2024)<br>"
-            "<sup>X = average award size (FY2024) | Y = % change in total funding vs earliest available year | "
-            "Bubble size = total FY2024 dollars | Hover for disciplines & sample projects</sup>"
+            "SSHRC All Programs: Funding by Area of Research (2020–2024)<br>"
+            "<sup>X = average award size (FY2024) | Y = % change vs earliest available year | "
+            "Bubble size = total FY2024 dollars | Click bubble to pin details</sup>"
         ),
-        font=dict(size=15), x=0.01
+        font=dict(size=14), x=0.01,
     ),
     xaxis=dict(title="Average Award Size FY2024 ($K)", gridcolor="#eee"),
-    yaxis=dict(title="Funding Trend (% change, earliest year → FY2024)", gridcolor="#eee",
-               ticksuffix="%"),
+    yaxis=dict(title="Funding Trend (% change, earliest year → FY2024)",
+               gridcolor="#eee", ticksuffix="%"),
     plot_bgcolor="white",
     width=1400,
     height=850,
-    margin=dict(t=110, l=80, r=40, b=80),
+    margin=dict(t=140, l=80, r=40, b=80),
     showlegend=False,
 )
 
+fig.add_hline(y=0, line=dict(color="#666", dash="dash", width=1))
+
+# ── Write HTML and inject click-to-pin JS ─────────────────────────────────────
 out = r"C:\Users\calvi\policy-deep-dive-workspace\sshrc_bubble.html"
 fig.write_html(out, include_plotlyjs=True)
 
-# Inject click-to-pin panel JS directly before </body>
 click_js = """
 <div id="sshrc-panel" style="position:fixed;top:80px;right:24px;width:420px;max-height:82vh;
 overflow-y:auto;background:#fff;border:1px solid #d0d0d0;border-radius:10px;
@@ -249,10 +246,7 @@ line-height:1.65;display:none;z-index:9999;font-family:sans-serif;"></div>
 (function() {
     var panel = document.getElementById('sshrc-panel');
     function closePanel() { panel.style.display = 'none'; }
-
-    var plots = document.querySelectorAll('.plotly-graph-div');
-    var myPlot = plots[0];
-
+    var myPlot = document.querySelectorAll('.plotly-graph-div')[0];
     myPlot.on('plotly_click', function(data) {
         var pt = data.points[0];
         var content = pt.customdata;
@@ -275,11 +269,3 @@ with open(out, "w", encoding="utf-8") as f:
     f.write(html)
 
 print("Written:", out)
-
-# Print summary table
-print(f"\n{'Area':<45} {'FY2024 $M':>9} {'Grants':>7} {'Avg $K':>7} {'Trend':>8}")
-print("-" * 80)
-for b in sorted(bubble_data, key=lambda x: -x["total_2024"]):
-    t = f"+{b['trend_pct']:.0f}%" if b["trend_pct"] >= 0 else f"{b['trend_pct']:.0f}%"
-    print(f"{b['area']:<45} {b['total_2024']/1e6:>9.1f} {b['count_2024']:>7} "
-          f"{b['avg_2024']/1000:>7.0f} {t:>8}")
