@@ -30,7 +30,7 @@ OUT_HTML = os.path.join(BASE_DIR, "sshrc_dashboard.html")
 
 PROGRAMS = [
     "Insight Grants",
-    "Insight Development Grants",
+    "Insight Development Grant",
     "Partnership Grants",
     "Partnership Development Grants",
     "Connection Grants",
@@ -39,7 +39,7 @@ PROGRAMS = [
 
 PROG_COLORS = {
     "Insight Grants":                 "#1f6aa5",
-    "Insight Development Grants":     "#2d8fc4",
+    "Insight Development Grant":      "#2d8fc4",
     "Partnership Grants":             "#2a9d5c",
     "Partnership Development Grants": "#52b67a",
     "Connection Grants":              "#e07b39",
